@@ -96,7 +96,9 @@ namespace RobotLocalization
     Eigen::MatrixXd measurementCovarianceSubset(updateSize, updateSize);  // R
     Eigen::MatrixXd stateToMeasurementSubset(updateSize, state_.rows());  // H
     Eigen::MatrixXd kalmanGainSubset(state_.rows(), updateSize);          // K
-    Eigen::VectorXd innovationSubset(updateSize);                         // z - Hx
+    Eigen::VectorXd innovationSubset(updateSize);
+    // We add this one to store K(z - Hx)
+    Eigen::VectorXd kalmanGainInnovationSubset(state_.rows());        
 
     stateSubset.setZero();
     measurementSubset.setZero();
@@ -161,6 +163,8 @@ namespace RobotLocalization
     kalmanGainSubset.noalias() = pht * hphrInv;
 
     innovationSubset = (measurementSubset - stateSubset);
+    // We calculate K(z - Hx) here.
+    kalmanGainInnovationSubset.noalias() = kalmanGainSubset * innovationSubset;
 
     // Wrap angles in the innovation
     for (size_t i = 0; i < updateSize; ++i)
@@ -185,7 +189,14 @@ namespace RobotLocalization
     if (checkMahalanobisThreshold(innovationSubset, hphrInv, measurement.mahalanobisThresh_))
     {
       // (3) Apply the gain to the difference between the state and measurement: x = x + K(z - Hx)
-      state_.noalias() += kalmanGainSubset * innovationSubset;
+      // state_.noalias() += kalmanGainSubset * innovationSubset;
+      
+      // Note we have modifiy here, that only correct the specified states.
+      // In the original KF, we assume zero is specified for non-updated states.
+      for (size_t i = 0; i < updateSize; ++i)
+      {
+        state_(updateIndices[i]) += kalmanGainInnovationSubset[updateIndices[i]];
+      }      
 
       // (4) Update the estimate error covariance using the Joseph form: (I - KH)P(I - KH)' + KRK'
       Eigen::MatrixXd gainResidual = identity_;
@@ -323,7 +334,7 @@ namespace RobotLocalization
     zCoeff = -sp * cr;
     double dFz_dP = (xCoeff * xVel + yCoeff * yVel + zCoeff * zVel) * delta +
                     (xCoeff * xAcc + yCoeff * yAcc + zCoeff * zAcc) * oneHalfATSquared;
-    double dFY_dP = (sr * tp * cpi * pitchVel - cr * tp * cpi * yawVel) * delta;
+    double dFY_dP = (sr * tp * cpi * pitchVel + cr * tp * cpi * yawVel) * delta;
 
     // Much of the transfer function Jacobian is identical to the transfer function
     transferFunctionJacobian_ = transferFunction_;
